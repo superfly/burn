@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,13 +29,18 @@ import (
 )
 
 func init() {
-	RootCmd.PersistentFlags().Bool("verbose", false, "verbose output")
-	RootCmd.Flags().IntP("concurrency", "c", 10, "number of concurrent requests")
-	RootCmd.Flags().StringP("duration", "d", "60s", "duration for the test")
+	flags := RootCmd.Flags()
 
-	RootCmd.Flags().BoolP("insecure-skip-verify", "k", true, "allow insecure TLS certificates (self-signed, wrong hostname, etc. default: true)")
-	RootCmd.Flags().Bool("disable-keepalives", false, "disable reusing connections via keepalives (default: false)")
-	RootCmd.Flags().Bool("resume-tls", false, "allow resuming TLS (default: false)")
+	RootCmd.PersistentFlags().Bool("verbose", false, "verbose output")
+	flags.IntP("concurrency", "c", 10, "number of concurrent requests")
+	flags.StringP("duration", "d", "60s", "duration for the test")
+
+	flags.BoolP("insecure-skip-verify", "k", true, "allow insecure TLS certificates (self-signed, wrong hostname, etc. default: true)")
+	flags.Bool("disable-keepalives", false, "disable reusing connections via keepalives (default: false)")
+	flags.Bool("resume-tls", false, "allow resuming TLS (default: false)")
+
+	flags.StringArrayP("header", "H", []string{}, "headers to send")
+
 }
 
 func Execute() {
@@ -93,11 +99,33 @@ var RootCmd = &cobra.Command{
 
 		var start time.Time
 
-		fmt.Printf("\n%s %s for %s\n", aurora.Red("Burning"), u, aurora.Bold(d))
-
 		sem := semaphore.New(c)
 
 		transport := getTransport(cmd)
+
+		header := make(http.Header)
+
+		headers, err := flags.GetStringArray("header")
+		if err != nil {
+			panic(err)
+		}
+
+		for _, h := range headers {
+			parts := strings.Split(h, ":")
+			header.Set(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
+		}
+
+		req := &http.Request{
+			URL:    u,
+			Header: header,
+		}
+
+		if host := header.Get("Host"); host != "" {
+			req.Host = host
+		}
+
+		fmt.Printf("\n%s %s for %s\n", aurora.Red("Burning"), u, aurora.Bold(d))
+
 		go func() {
 			start = time.Now()
 			for {
@@ -108,10 +136,7 @@ var RootCmd = &cobra.Command{
 					defer func() {
 						go responseTimes.Append(time.Since(reqStart).Seconds())
 					}()
-					req := &http.Request{
-						URL:    u,
-						Header: make(http.Header),
-					}
+
 					ctx := httptrace.WithClientTrace(context.Background(), getClientTracer())
 					reqStart = time.Now()
 					res, err := transport.RoundTrip(req.WithContext(ctx))
