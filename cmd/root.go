@@ -191,6 +191,16 @@ var RootCmd = &cobra.Command{
 			}
 		}
 
+		fmt.Println(aurora.Red("\nStatus code:"))
+		statusCount := map[int]int64{}
+		for _, s := range statuses.GetItems() {
+			statusCount[s] = statusCount[s] + 1
+		}
+
+		for n, count := range statusCount {
+			fmt.Printf("%d => %d\n", n, count)
+		}
+
 		fmt.Println(aurora.Red("\nErrors:"))
 		fmt.Printf("%d errors.\n", len(errors.GetItems()))
 		// if len(errors.GetItems()) > 0 {
