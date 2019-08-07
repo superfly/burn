@@ -45,8 +45,8 @@ func init() {
 }
 
 // Execute ..
-func Execute() {
-	rootCmd.Execute()
+func Execute() error {
+	return rootCmd.Execute()
 }
 
 var timeSpent time.Duration
