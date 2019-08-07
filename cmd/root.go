@@ -29,11 +29,12 @@ import (
 )
 
 func init() {
-	flags := RootCmd.Flags()
+	flags := rootCmd.Flags()
 
-	RootCmd.PersistentFlags().Bool("verbose", false, "verbose output")
+	rootCmd.PersistentFlags().Bool("verbose", false, "verbose output")
 	flags.IntP("concurrency", "c", 10, "number of concurrent requests")
 	flags.StringP("duration", "d", "60s", "duration for the test")
+	flags.StringP("timeout", "t", "2s", "connection timeout")
 
 	flags.BoolP("insecure-skip-verify", "k", true, "allow insecure TLS certificates (self-signed, wrong hostname, etc. default: true)")
 	flags.Bool("disable-keepalives", false, "disable reusing connections via keepalives (default: false)")
@@ -43,28 +44,30 @@ func init() {
 
 }
 
+// Execute ..
 func Execute() {
-	RootCmd.Execute()
+	rootCmd.Execute()
 }
 
 var timeSpent time.Duration
 
 var (
-	connectTimes      = NewConcurrentFloat64Slice()
-	tlsHandshakeTimes = NewConcurrentFloat64Slice()
-	ttfb              = NewConcurrentFloat64Slice()
-	responseTimes     = NewConcurrentFloat64Slice()
-	requestTimes      = NewConcurrentFloat64Slice()
+	connectTimes      = newConcurrentFloat64Slice()
+	tlsHandshakeTimes = newConcurrentFloat64Slice()
+	ttfb              = newConcurrentFloat64Slice()
+	responseTimes     = newConcurrentFloat64Slice()
+	requestTimes      = newConcurrentFloat64Slice()
+	headerTimes       = newConcurrentFloat64Slice()
 	requestsCount     int64
 
-	tlsCiphersUsed = NewConcurrentUint16Slice()
+	tlsCiphersUsed = newConcurrentUint16Slice()
 	tlsReusedCount int64
 
-	errors   = NewConcurrentErrorSlice()
-	statuses = NewConcurrentIntSlice()
+	errors   = newConcurrentErrorSlice()
+	statuses = newConcurrentIntSlice()
 )
 
-var RootCmd = &cobra.Command{
+var rootCmd = &cobra.Command{
 	Use:   "burn [url]",
 	Short: "Burn is an HTTP load tester with advanced statistics.",
 	Args:  cobra.ExactArgs(1),
@@ -134,7 +137,7 @@ var RootCmd = &cobra.Command{
 					var reqStart time.Time
 					defer sem.Release()
 					defer func() {
-						go responseTimes.Append(time.Since(reqStart).Seconds())
+						go responseTimes.append(time.Since(reqStart).Seconds())
 					}()
 
 					ctx := httptrace.WithClientTrace(context.Background(), getClientTracer())
@@ -142,17 +145,17 @@ var RootCmd = &cobra.Command{
 					res, err := transport.RoundTrip(req.WithContext(ctx))
 					go atomic.AddInt64(&requestsCount, 1)
 					if err != nil {
-						go errors.Append(err)
+						go errors.append(err)
 						return
 					}
-					go statuses.Append(res.StatusCode)
+					go statuses.append(res.StatusCode)
 
 					if res.Body != nil {
 						if _, err := io.Copy(ioutil.Discard, res.Body); err != nil {
-							go errors.Append(err)
+							go errors.append(err)
 						}
 						if err := res.Body.Close(); err != nil {
-							go errors.Append(err)
+							go errors.append(err)
 						}
 					}
 
@@ -180,10 +183,10 @@ var RootCmd = &cobra.Command{
 		fmt.Println(aurora.Cyan("\nMeta:"))
 		renderMeta()
 
-		if len(tlsCiphersUsed.GetItems()) > 0 {
+		if len(tlsCiphersUsed.getItems()) > 0 {
 			fmt.Println(aurora.Blue("\nCiphers:"))
 			ciphersCount := map[string]int64{}
-			for _, cipher := range tlsCiphersUsed.GetItems() {
+			for _, cipher := range tlsCiphersUsed.getItems() {
 				ciphersCount[tlsCiphersList[cipher]] = ciphersCount[tlsCiphersList[cipher]] + 1
 			}
 			for n, count := range ciphersCount {
@@ -193,7 +196,7 @@ var RootCmd = &cobra.Command{
 
 		fmt.Println(aurora.Red("\nStatus code:"))
 		statusCount := map[int]int64{}
-		for _, s := range statuses.GetItems() {
+		for _, s := range statuses.getItems() {
 			statusCount[s] = statusCount[s] + 1
 		}
 
@@ -202,10 +205,10 @@ var RootCmd = &cobra.Command{
 		}
 
 		fmt.Println(aurora.Red("\nErrors:"))
-		fmt.Printf("%d errors.\n", len(errors.GetItems()))
-		// if len(errors.GetItems()) > 0 {
+		fmt.Printf("%d errors.\n", len(errors.getItems()))
+		// if len(errors.getItems()) > 0 {
 		errorsCount := map[string]int64{}
-		for _, err := range errors.GetItems() {
+		for _, err := range errors.getItems() {
 			errorsCount[err.Error()] = errorsCount[err.Error()] + 1
 		}
 
@@ -220,18 +223,22 @@ var RootCmd = &cobra.Command{
 	},
 }
 
+type statsFn func(input stats.Float64Data) (min float64, err error)
+
 func renderStats() {
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetAutoFormatHeaders(false)
-	table.SetHeader([]string{"Metric", "p50", "p75", "p95", "p99", "Min", "Mean", "Max", "Std. Dev"})
-	table.SetHeaderColor(nil, nil, nil, nil, nil, nil, nil, nil, tablewriter.Color(tablewriter.FgHiBlackColor))
-	table.SetColumnColor(nil, nil, nil, nil, nil, nil, nil, nil, tablewriter.Color(tablewriter.FgHiBlackColor))
+	table.SetHeader([]string{"Metric", "p50", "p95", "p99", "Min", "Mean", "Max", "Std. Dev"})
+	table.SetHeaderColor(nil, nil, nil, nil, nil, nil, nil, tablewriter.Color(tablewriter.FgHiBlackColor))
+	table.SetColumnColor(nil, nil, nil, nil, nil, nil, nil, tablewriter.Color(tablewriter.FgHiBlackColor))
 
 	m := map[int]string{
 		0: "Connect",
 		1: "TLS Handshake",
-		2: "Request fully written",
-		3: "Response fully read",
+		2: "Headers written",
+		3: "Request written",
+		4: "TTFB",
+		5: "Response read",
 	}
 
 	var keys []int
@@ -239,80 +246,51 @@ func renderStats() {
 		keys = append(keys, k)
 	}
 
-	csm := map[string]*ConcurrentFloat64Slice{
-		"Connect":               connectTimes,
-		"TLS Handshake":         tlsHandshakeTimes,
-		"Request fully written": requestTimes,
-		"Response fully read":   responseTimes,
+	csm := map[int]*concurrentFloat64Slice{
+		0: connectTimes,
+		1: tlsHandshakeTimes,
+		2: headerTimes,
+		3: requestTimes,
+		4: ttfb,
+		5: responseTimes,
 	}
 
 	sort.Ints(keys)
 
 	for _, k := range keys {
 		name := m[k]
-		cs := csm[name]
-		d := []string{name}
-		if len(cs.GetItems()) == 0 {
+		cs := csm[k]
+		row := []string{name}
+		if len(cs.getItems()) == 0 {
 			continue
 		}
 
-		for _, p := range []int{50, 75, 95, 99} {
-			if pf, err := stats.Percentile(cs.GetItems(), float64(p)); err != nil {
+		for _, p := range []int{50, 95, 99} {
+			pf, err := stats.Percentile(cs.getItems(), float64(p))
+			if err != nil {
 				panic(err)
-			} else {
-				ps := fmt.Sprintf("%f", pf)
-				if pd, err := time.ParseDuration(ps + "s"); err != nil {
-					panic(err)
-				} else {
-					d = append(d, pd.String())
-				}
 			}
+			ps := fmt.Sprintf("%f", pf)
+			pd, err := time.ParseDuration(ps + "s")
+			if err != nil {
+				panic(err)
+			}
+			row = append(row, pd.String())
 		}
 
-		if min, err := stats.Min(cs.GetItems()); err != nil {
-			panic(err)
-		} else {
-			mins := fmt.Sprintf("%f", min)
-			if mind, err := time.ParseDuration(mins + "s"); err != nil {
+		for _, f := range []statsFn{stats.Min, stats.Mean, stats.Max, stats.StandardDeviation} {
+			stat, err := f(cs.getItems())
+			if err != nil {
 				panic(err)
-			} else {
-				d = append(d, mind.String())
 			}
+			secs, err := time.ParseDuration(fmt.Sprintf("%fs", stat))
+			if err != nil {
+				panic(err)
+			}
+			row = append(row, secs.String())
 		}
 
-		if mean, err := stats.Mean(cs.GetItems()); err != nil {
-			panic(err)
-		} else {
-			means := fmt.Sprintf("%f", mean)
-			if meand, err := time.ParseDuration(means + "s"); err != nil {
-				panic(err)
-			} else {
-				d = append(d, meand.String())
-			}
-		}
-
-		if max, err := stats.Max(cs.GetItems()); err != nil {
-			panic(err)
-		} else {
-			maxs := fmt.Sprintf("%f", max)
-			if maxd, err := time.ParseDuration(maxs + "s"); err != nil {
-				panic(err)
-			} else {
-				d = append(d, maxd.String())
-			}
-		}
-
-		if stddev, err := stats.StandardDeviation(cs.GetItems()); err != nil {
-			panic(err)
-		} else {
-			stddevs := fmt.Sprintf("%f", stddev)
-			if stddevd, err := time.ParseDuration(stddevs + "s"); err != nil {
-				panic(err)
-			} else {
-				d = append(d, stddevd.String())
-			}
-		}
-		table.Append(d)
+		table.Append(row)
 	}
 
 	table.Render() // Send output
@@ -348,6 +326,15 @@ func getTransport(cmd *cobra.Command) *http.Transport {
 		panic(err)
 	}
 
+	t, err := cmd.Flags().GetString("timeout")
+	if err != nil {
+		panic(err)
+	}
+	timeout, err := time.ParseDuration(t)
+	if err != nil {
+		panic(err)
+	}
+
 	return &http.Transport{
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second, // I guess?
@@ -358,7 +345,7 @@ func getTransport(cmd *cobra.Command) *http.Transport {
 		MaxIdleConnsPerHost: c * 2, // as many as we want to concurrently run
 
 		DialContext: (&net.Dialer{
-			Timeout:   5 * time.Second,
+			Timeout:   timeout,
 			DualStack: true,
 		}).DialContext,
 
@@ -386,105 +373,111 @@ func getClientTracer() *httptrace.ClientTrace {
 			connectStart = time.Now()
 		},
 		ConnectDone: func(network, addr string, err error) {
-			go connectTimes.Append(time.Since(connectStart).Seconds())
+			go connectTimes.append(time.Since(connectStart).Seconds())
 		},
 		TLSHandshakeStart: func() {
 			tlsStart = time.Now()
 		},
 		TLSHandshakeDone: func(connState tls.ConnectionState, err error) {
-			go tlsHandshakeTimes.Append(time.Since(tlsStart).Seconds())
-			go tlsCiphersUsed.Append(connState.CipherSuite)
+			go tlsHandshakeTimes.append(time.Since(tlsStart).Seconds())
+			go tlsCiphersUsed.append(connState.CipherSuite)
 			if connState.DidResume {
 				go atomic.AddInt64(&tlsReusedCount, 1)
 			}
 		},
+		WroteHeaders: func() {
+			go headerTimes.append(time.Since(reqStart).Seconds())
+		},
 		WroteRequest: func(info httptrace.WroteRequestInfo) {
-			go requestTimes.Append(time.Since(reqStart).Seconds())
+			go requestTimes.append(time.Since(reqStart).Seconds())
+		},
+		GotFirstResponseByte: func() {
+			go ttfb.append(time.Since(reqStart).Seconds())
 		},
 	}
 }
 
-type ConcurrentFloat64Slice struct {
+type concurrentFloat64Slice struct {
 	sync.RWMutex
 	items []float64
 }
 
-func NewConcurrentFloat64Slice() *ConcurrentFloat64Slice {
-	return &ConcurrentFloat64Slice{items: make([]float64, 0)}
+func newConcurrentFloat64Slice() *concurrentFloat64Slice {
+	return &concurrentFloat64Slice{items: make([]float64, 0)}
 }
 
-func (cs *ConcurrentFloat64Slice) Append(f float64) {
+func (cs *concurrentFloat64Slice) append(f float64) {
 	cs.Lock()
 	defer cs.Unlock()
 
 	cs.items = append(cs.items, f)
 }
 
-func (cs *ConcurrentFloat64Slice) GetItems() []float64 {
+func (cs *concurrentFloat64Slice) getItems() []float64 {
 	cs.RLock()
 	defer cs.RUnlock()
 	return cs.items
 }
 
-type ConcurrentErrorSlice struct {
+type concurrentErrorSlice struct {
 	sync.RWMutex
 	items []error
 }
 
-func NewConcurrentErrorSlice() *ConcurrentErrorSlice {
-	return &ConcurrentErrorSlice{items: make([]error, 0)}
+func newConcurrentErrorSlice() *concurrentErrorSlice {
+	return &concurrentErrorSlice{items: make([]error, 0)}
 }
 
-func (cs *ConcurrentErrorSlice) Append(f error) {
+func (cs *concurrentErrorSlice) append(f error) {
 	cs.Lock()
 	defer cs.Unlock()
 
 	cs.items = append(cs.items, f)
 }
 
-func (cs *ConcurrentErrorSlice) GetItems() []error {
+func (cs *concurrentErrorSlice) getItems() []error {
 	cs.RLock()
 	defer cs.RUnlock()
 	return cs.items
 }
 
-type ConcurrentIntSlice struct {
+type concurrentIntSlice struct {
 	sync.RWMutex
 	items []int
 }
 
-func NewConcurrentIntSlice() *ConcurrentIntSlice {
-	return &ConcurrentIntSlice{items: make([]int, 0)}
+func newConcurrentIntSlice() *concurrentIntSlice {
+	return &concurrentIntSlice{items: make([]int, 0)}
 }
 
-func (cs *ConcurrentIntSlice) Append(f int) {
+func (cs *concurrentIntSlice) append(f int) {
 	cs.Lock()
 	defer cs.Unlock()
 	cs.items = append(cs.items, f)
 }
 
-func (cs *ConcurrentIntSlice) GetItems() []int {
+func (cs *concurrentIntSlice) getItems() []int {
 	cs.RLock()
 	defer cs.RUnlock()
 	return cs.items
 }
 
-type ConcurrentUint16Slice struct {
+type concurrentUint16Slice struct {
 	sync.RWMutex
 	items []uint16
 }
 
-func NewConcurrentUint16Slice() *ConcurrentUint16Slice {
-	return &ConcurrentUint16Slice{items: make([]uint16, 0)}
+func newConcurrentUint16Slice() *concurrentUint16Slice {
+	return &concurrentUint16Slice{items: make([]uint16, 0)}
 }
 
-func (cs *ConcurrentUint16Slice) Append(f uint16) {
+func (cs *concurrentUint16Slice) append(f uint16) {
 	cs.Lock()
 	defer cs.Unlock()
 	cs.items = append(cs.items, f)
 }
 
-func (cs *ConcurrentUint16Slice) GetItems() []uint16 {
+func (cs *concurrentUint16Slice) getItems() []uint16 {
 	cs.RLock()
 	defer cs.RUnlock()
 	return cs.items

@@ -1,0 +1,15 @@
+github.com/abiosoft/semaphore v0.0.0-20170429185630-9d5d6764eda2 h1:t5b8XWxLxQYA7VUvnd5II6n5TuWqA99jeGa2oZ67gBg=
+github.com/abiosoft/semaphore v0.0.0-20170429185630-9d5d6764eda2/go.mod h1:Kqn7/fS2RMB9yaSd1KegoEtuugHW0P9Ia/cJyAmECNw=
+github.com/inconshreveable/mousetrap v1.0.0/go.mod h1:PxqpIevigyE2G7u3NXJIT2ANytuPF1OarO4DADm73n8=
+github.com/logrusorgru/aurora v0.0.0-20170818113300-b9c3722b64a1 h1:w6dPpmpI7RTWrHo9vbb7kFiCaNy4eOrLOuG4wRoSZP0=
+github.com/logrusorgru/aurora v0.0.0-20170818113300-b9c3722b64a1/go.mod h1:7rIyQOR62GCctdiQpZ/zOJlFyk6y+94wXzv6RNZgaR4=
+github.com/mattn/go-runewidth v0.0.2 h1:UnlwIPBGaTZfPQ6T1IGzPI0EkYAQmT9fAEJ/poFC63o=
+github.com/mattn/go-runewidth v0.0.2/go.mod h1:LwmH8dsx7+W8Uxz3IHJYH5QSwggIsqBzpuz5H//U1FU=
+github.com/montanaflynn/stats v0.0.0-20151014174947-eeaced052adb h1:bsjNADsjHq0gjU7KO7zwoX5k3HtFdf6TDzB3ncl5iUs=
+github.com/montanaflynn/stats v0.0.0-20151014174947-eeaced052adb/go.mod h1:wL8QJuTMNUDYhXwkmfOly8iTdp5TEcJFWZD2D7SIkUc=
+github.com/olekukonko/tablewriter v0.0.0-20170925234030-a7a4c189eb47 h1:9LtI8V19RbIDkx5gAhcP1TV1ByyIdavLGgWgefpoEPM=
+github.com/olekukonko/tablewriter v0.0.0-20170925234030-a7a4c189eb47/go.mod h1:vsDQFd/mU46D+Z4whnwzcISnGGzXWMclvtLoiIKAKIo=
+github.com/spf13/cobra v0.0.1 h1:zZh3X5aZbdnoj+4XkaBxKfhO4ot82icYdhhREIAXIj8=
+github.com/spf13/cobra v0.0.1/go.mod h1:1l0Ry5zgKvJasoi3XT1TypsSe7PqH0Sj9dhYf7v3XqQ=
+github.com/spf13/pflag v1.0.0 h1:oaPbdDe/x0UncahuwiPxW1GYJyilRAdsPnq3e1yaPcI=
+github.com/spf13/pflag v1.0.0/go.mod h1:DYY7MBk1bdzusC3SYhjObp+wFpr4gzcvqqNjLnInEg4=
